@@ -102,16 +102,40 @@ html,body{
   min-height:16px;
 }
 
-#reset-btn{
-  color:rgba(255,255,255,0.25);
-  font-size:11px;
-  background:none;border:none;
+#auto-btn{
+  background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.18);
+  border-radius:8px;
+  color:#fff;
   cursor:pointer;
   font-family:'Inter',sans-serif;
-  text-align:center;
-  padding:0;
+  font-size:13px;font-weight:600;
+  padding:10px;
+  width:100%;
+  transition:background 0.15s,opacity 0.15s;
 }
-#reset-btn:hover{color:rgba(255,255,255,0.5)}
+#auto-btn:hover{background:rgba(255,255,255,0.13)}
+#auto-btn:disabled{opacity:0.4;cursor:default}
+
+#or-divider{
+  display:flex;align-items:center;gap:8px;
+  color:rgba(255,255,255,0.2);font-size:11px;
+}
+#or-divider::before,#or-divider::after{
+  content:'';flex:1;height:1px;background:rgba(255,255,255,0.1);
+}
+
+#setup-status{
+  font-size:12px;line-height:1.4;min-height:16px;
+  color:rgba(255,255,255,0.4);
+}
+
+#setup-err{
+  color:#ff6b6b;
+  font-size:12px;
+  line-height:1.4;
+  min-height:16px;
+}
 
 /* ── Card ─────────────────────────────────────────────────── */
 #card{
@@ -290,10 +314,11 @@ body.lg #platform svg{width:36px;height:36px}
       <span>Music Widget</span>
     </div>
     <h2>Connect to YouTube Music Desktop</h2>
-    <p>Enter the IP address of the PC running YouTube Music Desktop. On the same PC, use <strong style="color:rgba(255,255,255,0.7)">localhost</strong>.</p>
-    <input id="ip-input" type="text" placeholder="192.168.x.x" spellcheck="false" autocomplete="off">
-    <small>On Windows: open cmd → type <code style="color:rgba(255,255,255,0.5)">ipconfig</code> → copy the IPv4 Address</small>
-    <small>In YouTube Music Desktop: Settings → Plugins → Companion Server → Enable</small>
+    <p>Make sure YouTube Music Desktop is open with Companion Server enabled in Settings → Plugins.</p>
+    <button id="auto-btn">Auto-detect</button>
+    <div id="setup-status"></div>
+    <div id="or-divider">or enter manually</div>
+    <input id="ip-input" type="text" placeholder="192.168.x.x or localhost" spellcheck="false" autocomplete="off">
     <button id="connect-btn">Connect</button>
     <div id="setup-err"></div>
   </div>
@@ -385,6 +410,90 @@ async function tryConnect(host) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
 }
+
+// ── Auto-discovery ────────────────────────────────────────────────────────────
+async function getLocalSubnets() {
+  return new Promise((resolve) => {
+    const ips = new Set();
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
+      pc.onicecandidate = (e) => {
+        if (!e.candidate) {
+          pc.close();
+          const subnets = new Set();
+          for (const ip of ips) {
+            const parts = ip.split('.');
+            if (parts.length === 4 && !ip.startsWith('127.')) {
+              subnets.add(parts.slice(0, 3).join('.'));
+            }
+          }
+          resolve([...subnets]);
+          return;
+        }
+        const m = e.candidate.candidate.match(/(\d+\.\d+\.\d+\.\d+)/);
+        if (m) ips.add(m[1]);
+      };
+      setTimeout(() => { try { pc.close(); } catch {} resolve([]); }, 2000);
+    } catch { resolve([]); }
+  });
+}
+
+async function scanForYTMD(onStatus) {
+  onStatus('Trying localhost…');
+  try { await tryConnect('localhost'); return 'localhost'; } catch {}
+
+  onStatus('Finding network…');
+  let subnets = await getLocalSubnets();
+  if (subnets.length === 0) subnets = ['192.168.1','192.168.0','10.0.0','192.168.2'];
+
+  onStatus(`Scanning network… (this takes ~2s)`);
+
+  const checks = [];
+  for (const subnet of subnets) {
+    for (let i = 1; i <= 254; i++) {
+      const ip = `${subnet}.${i}`;
+      checks.push(
+        fetch(`http://${ip}:${YTMD_PORT}/query`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(1500),
+        })
+        .then(r => r.ok ? ip : Promise.reject())
+        .catch(() => Promise.reject())
+      );
+    }
+  }
+
+  try { return await Promise.any(checks); }
+  catch { return null; }
+}
+
+const autoBtn    = document.getElementById('auto-btn');
+const statusEl   = document.getElementById('setup-status');
+
+autoBtn.addEventListener('click', async () => {
+  autoBtn.disabled = true;
+  autoBtn.textContent = 'Searching…';
+  setupErr.textContent = '';
+  statusEl.textContent = '';
+
+  const ip = await scanForYTMD(msg => { statusEl.textContent = msg; });
+
+  if (ip) {
+    HOST = ip;
+    localStorage.setItem('ytmd-host', HOST);
+    statusEl.textContent = '';
+    hideSetup();
+    startPolling();
+  } else {
+    statusEl.textContent = '';
+    setupErr.textContent = 'Not found. Enter the IP manually below, or check that Companion Server is enabled in YTMD.';
+  }
+
+  autoBtn.disabled = false;
+  autoBtn.textContent = 'Auto-detect';
+});
 
 connectBtn.addEventListener('click', async () => {
   const host = ipInput.value.trim();
