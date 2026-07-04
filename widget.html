@@ -325,6 +325,16 @@ body.lg #platform svg{width:36px;height:36px}
       <span>Searching your network</span>
       <span id="scan-dots"><span>.</span><span>.</span><span>.</span></span>
     </div>
+    <div id="setup-auth" style="display:none;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;color:rgba(255,255,255,0.5);font-size:13px">
+        <span>Found! Waiting for authorization</span>
+        <span id="auth-dots"><span>.</span><span>.</span><span>.</span></span>
+      </div>
+      <p style="color:rgba(255,255,255,0.4);font-size:12px;line-height:1.6">
+        In YouTube Music Desktop:<br>
+        <strong style="color:rgba(255,255,255,0.65)">Settings → Integrations<br>→ enable "companion authorization"</strong>
+      </p>
+    </div>
     <div id="or-divider" style="display:none">or enter manually</div>
     <input id="ip-input" type="text" placeholder="192.168.x.x or localhost" spellcheck="false" autocomplete="off" style="display:none">
     <button id="connect-btn" style="display:none">Connect</button>
@@ -372,17 +382,15 @@ body.lg #platform svg{width:36px;height:36px}
 
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
-const YTMD_PORT = 9863;
+const YTMD_PORT   = 9863;
+const APP_ID      = 'avgdru-obs-widget';
+const APP_NAME    = 'AvgDru OBS Music Widget';
+const APP_VERSION = '1.0.0';
 
 function getParam(key) {
   const qs = new URLSearchParams(location.search).get(key);
   if (qs !== null) return qs;
   return new URLSearchParams(location.hash.replace(/^#/, '')).get(key);
-}
-
-function hasParam(key) {
-  if (new URLSearchParams(location.search).has(key)) return true;
-  return new URLSearchParams(location.hash.replace(/^#/, '')).has(key);
 }
 
 function getSize() {
@@ -396,27 +404,47 @@ function getSize() {
 
 document.body.classList.add(getSize());
 
-// Host priority: URL param → localStorage → setup screen
-let HOST = getParam('host') || localStorage.getItem('ytmd-host');
+let HOST  = getParam('host') || localStorage.getItem('ytmd-host');
+let TOKEN = localStorage.getItem('ytmd-token');
 
-// ── Setup screen ──────────────────────────────────────────────────────────────
-const setupEl   = document.getElementById('setup');
-const ipInput   = document.getElementById('ip-input');
+// ── DOM refs (setup) ──────────────────────────────────────────────────────────
+const setupEl    = document.getElementById('setup');
+const scanningEl = document.getElementById('setup-scanning');
+const authEl     = document.getElementById('setup-auth');
+const orDivider  = document.getElementById('or-divider');
+const ipInput    = document.getElementById('ip-input');
 const connectBtn = document.getElementById('connect-btn');
-const setupErr  = document.getElementById('setup-err');
+const retryBtn   = document.getElementById('retry-btn');
+const setupErr   = document.getElementById('setup-err');
 
-function showSetup() {
-  setupEl.style.display = 'flex';
-  runScan();
+// ── Network helpers ───────────────────────────────────────────────────────────
+async function pingServer(host) {
+  const res = await fetch(`http://${host}:${YTMD_PORT}/metadata`, {
+    cache: 'no-store', signal: AbortSignal.timeout(3000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-function hideSetup() {
-  setupEl.style.display = 'none';
+async function requestAuthToken(host) {
+  const res = await fetch(`http://${host}:${YTMD_PORT}/api/v1/auth/requestToken`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appId: APP_ID, appName: APP_NAME, appVersion: APP_VERSION }),
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const token = data.token || data.code;
+  if (!token) throw new Error('No token');
+  return token;
 }
 
-async function tryConnect(host) {
-  const url = `http://${host}:${YTMD_PORT}/query`;
-  const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+async function fetchState(host, token) {
+  const res = await fetch(`http://${host}:${YTMD_PORT}/api/v1/state`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+    cache: 'no-store', signal: AbortSignal.timeout(3000),
+  });
+  if (res.status === 401) throw new Error('UNAUTHORIZED');
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
 }
@@ -450,24 +478,19 @@ async function getLocalSubnets() {
   });
 }
 
-async function scanForYTMD(onStatus) {
-  onStatus('Trying localhost…');
-  try { await tryConnect('localhost'); return 'localhost'; } catch {}
+async function scanForYTMD() {
+  try { await pingServer('localhost'); return 'localhost'; } catch {}
 
-  onStatus('Finding network…');
   let subnets = await getLocalSubnets();
   if (subnets.length === 0) subnets = ['192.168.1','192.168.0','10.0.0','192.168.2'];
-
-  onStatus(`Scanning network… (this takes ~2s)`);
 
   const checks = [];
   for (const subnet of subnets) {
     for (let i = 1; i <= 254; i++) {
       const ip = `${subnet}.${i}`;
       checks.push(
-        fetch(`http://${ip}:${YTMD_PORT}/query`, {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(1500),
+        fetch(`http://${ip}:${YTMD_PORT}/metadata`, {
+          cache: 'no-store', signal: AbortSignal.timeout(1500),
         })
         .then(r => r.ok ? ip : Promise.reject())
         .catch(() => Promise.reject())
@@ -479,35 +502,83 @@ async function scanForYTMD(onStatus) {
   catch { return null; }
 }
 
-const scanningEl = document.getElementById('setup-scanning');
-const orDivider  = document.getElementById('or-divider');
-const retryBtn   = document.getElementById('retry-btn');
+// ── Setup UI states ───────────────────────────────────────────────────────────
+function showSetup() {
+  setupEl.style.display = 'flex';
+  runScan();
+}
+
+function hideSetup() {
+  setupEl.style.display = 'none';
+}
+
+function setScanState() {
+  scanningEl.style.display = 'flex';
+  authEl.style.display     = 'none';
+  orDivider.style.display  = 'none';
+  ipInput.style.display    = 'none';
+  connectBtn.style.display = 'none';
+  retryBtn.style.display   = 'none';
+  setupErr.textContent     = '';
+}
+
+function setAuthState() {
+  scanningEl.style.display = 'none';
+  authEl.style.display     = 'flex';
+  orDivider.style.display  = 'none';
+  ipInput.style.display    = 'none';
+  connectBtn.style.display = 'none';
+  retryBtn.style.display   = 'none';
+  setupErr.textContent     = '';
+}
 
 function showManualInput() {
   scanningEl.style.display = 'none';
+  authEl.style.display     = 'none';
   orDivider.style.display  = 'flex';
   ipInput.style.display    = 'block';
   connectBtn.style.display = 'block';
   retryBtn.style.display   = 'block';
 }
 
-async function runScan() {
-  scanningEl.style.display = 'flex';
-  orDivider.style.display  = 'none';
-  ipInput.style.display    = 'none';
-  connectBtn.style.display = 'none';
-  retryBtn.style.display   = 'none';
-  setupErr.textContent     = '';
+// ── Auth flow ─────────────────────────────────────────────────────────────────
+let authInterval = null;
 
-  const ip = await scanForYTMD(() => {});
+async function runAuth(host) {
+  if (authInterval) { clearInterval(authInterval); authInterval = null; }
+  setAuthState();
+
+  const attempt = async () => {
+    try {
+      const token = await requestAuthToken(host);
+      clearInterval(authInterval);
+      authInterval = null;
+      TOKEN = token;
+      HOST  = host;
+      localStorage.setItem('ytmd-host', HOST);
+      localStorage.setItem('ytmd-token', TOKEN);
+      hideSetup();
+      startPolling();
+    } catch (_) { /* keep retrying */ }
+  };
+
+  await attempt();
+  if (authInterval === null && !TOKEN) {
+    authInterval = setInterval(attempt, 3000);
+  }
+}
+
+async function runScan() {
+  if (authInterval) { clearInterval(authInterval); authInterval = null; }
+  TOKEN = null;
+  setScanState();
+
+  const ip = await scanForYTMD();
 
   if (ip) {
-    HOST = ip;
-    localStorage.setItem('ytmd-host', HOST);
-    hideSetup();
-    startPolling();
+    await runAuth(ip);
   } else {
-    setupErr.textContent = 'Not found automatically. Check that:\n• YouTube Music Desktop is running\n• Companion Server is enabled (Settings → Plugins)\n• Port 9863 is allowed in Windows Firewall';
+    setupErr.textContent = 'Not found. Check that:\n• YouTube Music Desktop is running\n• Companion Server is enabled (Settings → Integrations)\n• Port 9863 is allowed in Windows Firewall';
     showManualInput();
   }
 }
@@ -520,16 +591,13 @@ connectBtn.addEventListener('click', async () => {
   setupErr.textContent = '';
   connectBtn.disabled = true;
   connectBtn.textContent = 'Connecting…';
-
   try {
-    await tryConnect(host);
-    HOST = host;
-    localStorage.setItem('ytmd-host', HOST);
-    hideSetup();
-    startPolling();
-  } catch (e) {
-    setupErr.textContent = `Can't reach ${host}:${YTMD_PORT} — is YouTube Music Desktop running with Companion Server enabled?`;
-  } finally {
+    await pingServer(host);
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Connect';
+    await runAuth(host);
+  } catch {
+    setupErr.textContent = `Can't reach ${host}:${YTMD_PORT} — is YouTube Music Desktop running?`;
     connectBtn.disabled = false;
     connectBtn.textContent = 'Connect';
   }
@@ -537,26 +605,38 @@ connectBtn.addEventListener('click', async () => {
 
 ipInput.addEventListener('keydown', e => { if (e.key === 'Enter') connectBtn.click(); });
 
-// ── Parse YTMD response ───────────────────────────────────────────────────────
+// ── Parse YTMD v1 state response ──────────────────────────────────────────────
 function parseYTMD(data) {
-  // Nested format: { track: {...}, player: {...} }
-  if (data.track && data.player) {
+  // v1 API: { player: { trackState, videoProgress }, video: { title, author, album, thumbnails, durationSeconds } }
+  if (data.player !== undefined && data.video !== undefined) {
+    const thumbs = data.video.thumbnails || [];
+    const cover  = thumbs.length ? thumbs[thumbs.length - 1].url : '';
     return {
-      title:    data.track.title,
-      artist:   data.track.author,
-      album:    data.track.album,
-      cover:    data.track.cover,
-      duration: data.track.duration || 0,
-      position: data.player.seekbarCurrentPosition || 0,
-      isPlaying: data.player.hasSong && !data.player.isPaused,
+      title:     data.video.title  || '',
+      artist:    data.video.author || '',
+      album:     data.video.album  || '',
+      cover,
+      duration:  data.video.durationSeconds    || 0,
+      position:  data.player.videoProgress     || 0,
+      isPlaying: data.player.trackState === 1,
     };
   }
-  // Flat format fallback
+  // Legacy nested format
+  if (data.track) {
+    return {
+      title:    data.track.title  || '',
+      artist:   data.track.author || '',
+      cover:    data.track.cover  || '',
+      duration: data.track.duration || 0,
+      position: data.player?.seekbarCurrentPosition || 0,
+      isPlaying: !!(data.player?.hasSong && !data.player?.isPaused),
+    };
+  }
+  // Flat fallback
   return {
-    title:    data.title    || '',
-    artist:   data.artist   || data.author || '',
-    album:    data.album    || '',
-    cover:    data.cover    || data.thumbnail || '',
+    title:    data.title  || '',
+    artist:   data.artist || data.author || '',
+    cover:    data.cover  || data.thumbnail || '',
     duration: data.duration || 0,
     position: data.seekbarCurrentPosition || data.elapsedSeconds || 0,
     isPlaying: !data.isPaused && !!data.title,
@@ -570,7 +650,7 @@ function fmtTime(s) {
   return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 }
 
-// ── DOM refs ──────────────────────────────────────────────────────────────────
+// ── DOM refs (widget) ─────────────────────────────────────────────────────────
 const card      = document.getElementById('card');
 const bgArt     = document.getElementById('bg-art');
 const artImg    = document.getElementById('art');
@@ -601,13 +681,21 @@ let pollTimer  = null;
 async function update() {
   let track;
   try {
-    const raw = await tryConnect(HOST);
+    const raw = await fetchState(HOST, TOKEN);
     track = parseYTMD(raw);
-  } catch (_) {
-    return; // keep last state
+  } catch (e) {
+    if (e.message === 'UNAUTHORIZED') {
+      TOKEN = null;
+      localStorage.removeItem('ytmd-token');
+      clearInterval(pollTimer);
+      pollTimer = null;
+      setupEl.style.display = 'flex';
+      runAuth(HOST);
+    }
+    return;
   }
 
-  if (!track.title || (!track.isPlaying && !track.title)) {
+  if (!track.title) {
     document.body.classList.add('idle');
     return;
   }
@@ -629,7 +717,7 @@ async function update() {
     if (track.cover) {
       artImg.src = track.cover;
       artImg.classList.remove('loaded');
-      artImg.onload = () => { artImg.classList.add('loaded'); artPH.classList.add('hidden'); };
+      artImg.onload  = () => { artImg.classList.add('loaded');    artPH.classList.add('hidden'); };
       artImg.onerror = () => { artImg.classList.remove('loaded'); artPH.classList.remove('hidden'); };
       bgArt.style.backgroundImage = `url(${track.cover})`;
       bgArt.classList.add('visible');
@@ -647,7 +735,7 @@ async function update() {
 
   if (track.duration > 0) {
     const pct = Math.min((track.position / track.duration) * 100, 100);
-    progFill.style.width = pct.toFixed(1) + '%';
+    progFill.style.width  = pct.toFixed(1) + '%';
     timestamp.textContent = fmtTime(track.position) + ' / ' + fmtTime(track.duration);
   }
 }
@@ -658,17 +746,22 @@ function startPolling() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-if (HOST) {
+if (HOST && TOKEN) {
   startPolling();
+} else if (HOST) {
+  setupEl.style.display = 'flex';
+  runAuth(HOST);
 } else {
   showSetup();
 }
 
-// ── Reset config (double-click no-song text) ──────────────────────────────────
+// ── Reset config ──────────────────────────────────────────────────────────────
 document.getElementById('no-song').addEventListener('dblclick', () => {
   localStorage.removeItem('ytmd-host');
-  HOST = null;
-  clearInterval(pollTimer);
+  localStorage.removeItem('ytmd-token');
+  HOST = null; TOKEN = null;
+  clearInterval(pollTimer); pollTimer = null;
+  if (authInterval) { clearInterval(authInterval); authInterval = null; }
   ipInput.value = '';
   setupErr.textContent = '';
   showSetup();
