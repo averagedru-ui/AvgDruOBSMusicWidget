@@ -426,14 +426,16 @@ async function pingServer(host) {
 }
 
 async function requestAuthToken(host) {
-  const params = new URLSearchParams({ appId: APP_ID, appName: APP_NAME, appVersion: APP_VERSION });
-  const res = await fetch(`http://${host}:${YTMD_PORT}/api/v1/auth/requestToken?${params}`, {
+  const res = await fetch(`http://${host}:${YTMD_PORT}/api/v1/auth/requestToken`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ appId: APP_ID, appName: APP_NAME, appVersion: APP_VERSION }),
     signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   const token = data.token || data.code;
-  if (!token) throw new Error('No token in response: ' + JSON.stringify(data));
+  if (!token) throw new Error('No token: ' + JSON.stringify(data));
   return token;
 }
 
