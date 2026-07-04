@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Music Widget</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+html,body{
+  width:100%;height:100%;
+  background:transparent;
+  font-family:'Inter',-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+}
+
+/* ── Setup screen ─────────────────────────────────────────── */
+#setup{
+  position:fixed;inset:0;
+  display:none;
+  align-items:center;justify-content:center;
+  background:rgba(8,8,14,0.96);
+  z-index:100;
+}
+
+#setup-card{
+  background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.1);
+  border-radius:16px;
+  padding:28px 32px;
+  width:320px;
+  display:flex;flex-direction:column;gap:12px;
+}
+
+#setup-logo{
+  display:flex;align-items:center;gap:10px;
+  margin-bottom:4px;
+}
+
+#setup-logo svg{width:28px;height:28px}
+
+#setup-logo span{
+  color:#fff;font-size:15px;font-weight:700;
+}
+
+#setup h2{
+  color:#fff;font-size:17px;font-weight:700;
+  line-height:1.3;
+}
+
+#setup p{
+  color:rgba(255,255,255,0.45);
+  font-size:13px;line-height:1.5;
+}
+
+#ip-input{
+  background:rgba(255,255,255,0.08);
+  border:1px solid rgba(255,255,255,0.15);
+  border-radius:8px;
+  color:#fff;
+  font-family:'Inter',sans-serif;
+  font-size:14px;
+  padding:10px 12px;
+  width:100%;
+  outline:none;
+  transition:border-color 0.2s;
+}
+#ip-input::placeholder{color:rgba(255,255,255,0.25)}
+#ip-input:focus{border-color:rgba(255,255,255,0.4)}
+
+#setup small{
+  color:rgba(255,255,255,0.3);
+  font-size:11px;
+  line-height:1.4;
+}
+
+#connect-btn{
+  background:#fff;
+  border:none;
+  border-radius:8px;
+  color:#0b0b14;
+  cursor:pointer;
+  font-family:'Inter',sans-serif;
+  font-size:13px;font-weight:700;
+  padding:10px;
+  width:100%;
+  transition:opacity 0.15s;
+  margin-top:2px;
+}
+#connect-btn:hover{opacity:0.88}
+#connect-btn:active{opacity:0.75}
+#connect-btn:disabled{opacity:0.4;cursor:default}
+
+#setup-err{
+  color:#ff6b6b;
+  font-size:12px;
+  line-height:1.4;
+  min-height:16px;
+}
+
+#reset-btn{
+  color:rgba(255,255,255,0.25);
+  font-size:11px;
+  background:none;border:none;
+  cursor:pointer;
+  font-family:'Inter',sans-serif;
+  text-align:center;
+  padding:0;
+}
+#reset-btn:hover{color:rgba(255,255,255,0.5)}
+
+/* ── Card ─────────────────────────────────────────────────── */
+#card{
+  position:relative;
+  display:flex;align-items:center;
+  overflow:hidden;
+  background:rgba(11,11,20,0.90);
+  transition:opacity 0.35s ease,transform 0.35s ease;
+  will-change:opacity,transform;
+}
+
+#card.fade-out{opacity:0;transform:translateY(6px)}
+
+#bg-art{
+  position:absolute;inset:0;
+  background-size:cover;background-position:center;
+  opacity:0;
+  filter:blur(40px);
+  transform:scale(1.4);
+  transition:opacity 0.8s ease;
+}
+#bg-art.visible{opacity:0.22}
+
+#content{
+  position:relative;z-index:1;
+  display:flex;align-items:center;
+  width:100%;
+}
+
+/* ── Album art ────────────────────────────────────────────── */
+#art-wrap{
+  flex-shrink:0;position:relative;overflow:hidden;
+}
+
+#art{
+  display:block;width:100%;height:100%;
+  object-fit:cover;
+  opacity:0;transition:opacity 0.4s ease;
+}
+#art.loaded{opacity:1}
+
+#art-placeholder{
+  position:absolute;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,0.06);
+  transition:opacity 0.3s;
+}
+#art-placeholder.hidden{opacity:0;pointer-events:none}
+
+/* ── Info ─────────────────────────────────────────────────── */
+#info{
+  flex:1;min-width:0;
+  display:flex;flex-direction:column;justify-content:center;
+}
+
+#title-clip{overflow:hidden;position:relative}
+
+#title{
+  color:#fff;font-weight:900;
+  line-height:1.08;
+  white-space:nowrap;
+  display:inline-block;
+}
+
+#artist{
+  color:rgba(255,255,255,0.50);
+  font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+/* ── Progress ─────────────────────────────────────────────── */
+#prog-row{
+  display:flex;align-items:center;gap:8px;
+}
+
+#prog-track{
+  flex:1;height:3px;border-radius:2px;
+  background:rgba(255,255,255,0.12);overflow:hidden;
+}
+
+#prog-fill{
+  height:100%;border-radius:2px;
+  background:#fff;width:0%;
+  transition:width 1s linear;
+}
+
+#timestamp{
+  color:rgba(255,255,255,0.38);
+  font-weight:500;font-variant-numeric:tabular-nums;
+  white-space:nowrap;flex-shrink:0;
+}
+
+/* ── Platform icon ────────────────────────────────────────── */
+#platform{
+  flex-shrink:0;
+  display:flex;align-items:flex-end;justify-content:center;
+  align-self:flex-end;
+}
+#platform svg{display:block}
+
+/* ── States ───────────────────────────────────────────────── */
+body.paused #card{opacity:0.65}
+
+#no-song{
+  display:none;
+  color:rgba(255,255,255,0.25);
+  font-size:13px;font-weight:500;
+}
+body.idle #card{display:none}
+body.idle #no-song{display:block}
+
+/* ── Marquee ──────────────────────────────────────────────── */
+@keyframes marquee{
+  0%,15%{transform:translateX(0)}
+  85%,100%{transform:translateX(var(--mx,0px))}
+}
+#title.scrolling{
+  animation:marquee 9s ease-in-out infinite alternate;
+}
+
+/* ══════════════════════════════════════════════════════════
+   SM  —  Pill  400 × 80
+══════════════════════════════════════════════════════════ */
+body.sm{width:400px;height:80px}
+body.sm #card{width:100%;height:72px;border-radius:36px;padding:8px 16px 8px 8px}
+body.sm #content{gap:12px}
+body.sm #art-wrap{width:56px;height:56px;border-radius:28px}
+body.sm #info{gap:3px}
+body.sm #title{font-size:15px}
+body.sm #artist{font-size:12px}
+body.sm #prog-row{display:none}
+body.sm #platform{width:26px;height:26px;align-self:center}
+body.sm #platform svg{width:26px;height:26px}
+
+/* ══════════════════════════════════════════════════════════
+   MD  —  Card  420 × 140
+══════════════════════════════════════════════════════════ */
+body.md{width:420px;height:140px}
+body.md #card{width:100%;height:130px;border-radius:18px;padding:15px 18px 15px 15px}
+body.md #content{gap:15px}
+body.md #art-wrap{width:100px;height:100px;border-radius:11px;box-shadow:0 6px 20px rgba(0,0,0,0.45)}
+body.md #info{gap:4px}
+body.md #title{font-size:21px}
+body.md #artist{font-size:13px;margin-bottom:7px}
+body.md #prog-row{display:flex}
+body.md #timestamp{font-size:11px}
+body.md #platform{width:30px;height:30px}
+body.md #platform svg{width:30px;height:30px}
+
+/* ══════════════════════════════════════════════════════════
+   LG  —  Big Card  520 × 180
+══════════════════════════════════════════════════════════ */
+body.lg{width:520px;height:180px}
+body.lg #card{width:100%;height:168px;border-radius:22px;padding:20px 22px 20px 20px}
+body.lg #content{gap:20px}
+body.lg #art-wrap{width:128px;height:128px;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,0.50)}
+body.lg #info{gap:5px}
+body.lg #title{font-size:28px}
+body.lg #artist{font-size:15px;margin-bottom:10px}
+body.lg #prog-row{display:flex}
+body.lg #timestamp{font-size:12px}
+body.lg #platform{width:36px;height:36px}
+body.lg #platform svg{width:36px;height:36px}
+</style>
+</head>
+<body>
+
+<!-- ── Setup screen ─────────────────────────────────────── -->
+<div id="setup">
+  <div id="setup-card">
+    <div id="setup-logo">
+      <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="16" fill="#FF0000"/>
+        <path fill="white" d="M22.4 12.3a2 2 0 0 0-1.4-1.4C19.8 10.6 16 10.6 16 10.6s-3.8 0-5 .3a2 2 0 0 0-1.4 1.4C9.3 13.5 9.3 16 9.3 16s0 2.5.3 3.7a2 2 0 0 0 1.4 1.4c1.2.3 5 .3 5 .3s3.8 0 5-.3a2 2 0 0 0 1.4-1.4c.3-1.2.3-3.7.3-3.7s0-2.5-.3-3.7zm-7.4 5.9V13.8l3.9 2.2-3.9 2.2z"/>
+      </svg>
+      <span>Music Widget</span>
+    </div>
+    <h2>Connect to YouTube Music Desktop</h2>
+    <p>Enter the IP address of the PC running YouTube Music Desktop. On the same PC, use <strong style="color:rgba(255,255,255,0.7)">localhost</strong>.</p>
+    <input id="ip-input" type="text" placeholder="192.168.x.x" spellcheck="false" autocomplete="off">
+    <small>On Windows: open cmd → type <code style="color:rgba(255,255,255,0.5)">ipconfig</code> → copy the IPv4 Address</small>
+    <small>In YouTube Music Desktop: Settings → Plugins → Companion Server → Enable</small>
+    <button id="connect-btn">Connect</button>
+    <div id="setup-err"></div>
+  </div>
+</div>
+
+<!-- ── Widget ────────────────────────────────────────────── -->
+<div id="no-song">No music playing</div>
+
+<div id="card">
+  <div id="bg-art"></div>
+  <div id="content">
+
+    <div id="art-wrap">
+      <img id="art" src="" alt="">
+      <div id="art-placeholder">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+             stroke="rgba(255,255,255,0.25)" stroke-width="1.5" stroke-linecap="round">
+          <path d="M9 18V5l12-2v13"/>
+          <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+        </svg>
+      </div>
+    </div>
+
+    <div id="info">
+      <div id="title-clip"><div id="title">—</div></div>
+      <div id="artist">—</div>
+      <div id="prog-row">
+        <div id="prog-track"><div id="prog-fill"></div></div>
+        <div id="timestamp">0:00</div>
+      </div>
+    </div>
+
+    <div id="platform">
+      <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="16" fill="#FF0000"/>
+        <path fill="white" d="M22.4 12.3a2 2 0 0 0-1.4-1.4C19.8 10.6 16 10.6 16 10.6s-3.8 0-5 .3a2 2 0 0 0-1.4 1.4C9.3 13.5 9.3 16 9.3 16s0 2.5.3 3.7a2 2 0 0 0 1.4 1.4c1.2.3 5 .3 5 .3s3.8 0 5-.3a2 2 0 0 0 1.4-1.4c.3-1.2.3-3.7.3-3.7s0-2.5-.3-3.7zm-7.4 5.9V13.8l3.9 2.2-3.9 2.2z"/>
+      </svg>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const YTMD_PORT = 26538;
+
+function getParam(key) {
+  const qs = new URLSearchParams(location.search).get(key);
+  if (qs !== null) return qs;
+  return new URLSearchParams(location.hash.replace(/^#/, '')).get(key);
+}
+
+function hasParam(key) {
+  if (new URLSearchParams(location.search).has(key)) return true;
+  return new URLSearchParams(location.hash.replace(/^#/, '')).has(key);
+}
+
+function getSize() {
+  const p = getParam('size');
+  if (p === 'sm' || p === 'md' || p === 'lg') return p;
+  const w = window.innerWidth;
+  if (w <= 420) return 'sm';
+  if (w <= 480) return 'md';
+  return 'lg';
+}
+
+document.body.classList.add(getSize());
+
+// Host priority: URL param → localStorage → setup screen
+let HOST = getParam('host') || localStorage.getItem('ytmd-host');
+
+// ── Setup screen ──────────────────────────────────────────────────────────────
+const setupEl   = document.getElementById('setup');
+const ipInput   = document.getElementById('ip-input');
+const connectBtn = document.getElementById('connect-btn');
+const setupErr  = document.getElementById('setup-err');
+
+function showSetup() {
+  setupEl.style.display = 'flex';
+}
+
+function hideSetup() {
+  setupEl.style.display = 'none';
+}
+
+async function tryConnect(host) {
+  const url = `http://${host}:${YTMD_PORT}/query`;
+  const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+connectBtn.addEventListener('click', async () => {
+  const host = ipInput.value.trim();
+  if (!host) return;
+  setupErr.textContent = '';
+  connectBtn.disabled = true;
+  connectBtn.textContent = 'Connecting…';
+
+  try {
+    await tryConnect(host);
+    HOST = host;
+    localStorage.setItem('ytmd-host', HOST);
+    hideSetup();
+    startPolling();
+  } catch (e) {
+    setupErr.textContent = `Can't reach ${host}:${YTMD_PORT} — is YouTube Music Desktop running with Companion Server enabled?`;
+  } finally {
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Connect';
+  }
+});
+
+ipInput.addEventListener('keydown', e => { if (e.key === 'Enter') connectBtn.click(); });
+
+// ── Parse YTMD response ───────────────────────────────────────────────────────
+function parseYTMD(data) {
+  // Nested format: { track: {...}, player: {...} }
+  if (data.track && data.player) {
+    return {
+      title:    data.track.title,
+      artist:   data.track.author,
+      album:    data.track.album,
+      cover:    data.track.cover,
+      duration: data.track.duration || 0,
+      position: data.player.seekbarCurrentPosition || 0,
+      isPlaying: data.player.hasSong && !data.player.isPaused,
+    };
+  }
+  // Flat format fallback
+  return {
+    title:    data.title    || '',
+    artist:   data.artist   || data.author || '',
+    album:    data.album    || '',
+    cover:    data.cover    || data.thumbnail || '',
+    duration: data.duration || 0,
+    position: data.seekbarCurrentPosition || data.elapsedSeconds || 0,
+    isPlaying: !data.isPaused && !!data.title,
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtTime(s) {
+  if (!s || isNaN(s) || s < 0) return '0:00';
+  const m = Math.floor(s / 60);
+  return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+}
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const card      = document.getElementById('card');
+const bgArt     = document.getElementById('bg-art');
+const artImg    = document.getElementById('art');
+const artPH     = document.getElementById('art-placeholder');
+const titleEl   = document.getElementById('title');
+const artistEl  = document.getElementById('artist');
+const progFill  = document.getElementById('prog-fill');
+const timestamp = document.getElementById('timestamp');
+
+// ── Marquee ───────────────────────────────────────────────────────────────────
+function applyMarquee() {
+  const clip = document.getElementById('title-clip');
+  const over = titleEl.scrollWidth - clip.clientWidth;
+  titleEl.classList.remove('scrolling');
+  titleEl.style.removeProperty('--mx');
+  if (over > 6) {
+    titleEl.style.setProperty('--mx', `-${over + 16}px`);
+    void titleEl.offsetWidth;
+    titleEl.classList.add('scrolling');
+  }
+}
+
+// ── Update loop ───────────────────────────────────────────────────────────────
+let lastTitle = null;
+let lastCover  = null;
+let pollTimer  = null;
+
+async function update() {
+  let track;
+  try {
+    const raw = await tryConnect(HOST);
+    track = parseYTMD(raw);
+  } catch (_) {
+    return; // keep last state
+  }
+
+  if (!track.title || (!track.isPlaying && !track.title)) {
+    document.body.classList.add('idle');
+    return;
+  }
+  document.body.classList.remove('idle');
+  document.body.classList.toggle('paused', !track.isPlaying);
+
+  const songChanged = track.title !== lastTitle || track.cover !== lastCover;
+
+  if (songChanged) {
+    card.classList.add('fade-out');
+    await new Promise(r => setTimeout(r, 350));
+
+    lastTitle = track.title;
+    lastCover = track.cover;
+
+    titleEl.textContent  = track.title  || 'Unknown';
+    artistEl.textContent = track.artist || 'Unknown Artist';
+
+    if (track.cover) {
+      artImg.src = track.cover;
+      artImg.classList.remove('loaded');
+      artImg.onload = () => { artImg.classList.add('loaded'); artPH.classList.add('hidden'); };
+      artImg.onerror = () => { artImg.classList.remove('loaded'); artPH.classList.remove('hidden'); };
+      bgArt.style.backgroundImage = `url(${track.cover})`;
+      bgArt.classList.add('visible');
+    } else {
+      artImg.src = '';
+      artImg.classList.remove('loaded');
+      artPH.classList.remove('hidden');
+      bgArt.style.backgroundImage = '';
+      bgArt.classList.remove('visible');
+    }
+
+    card.classList.remove('fade-out');
+    requestAnimationFrame(applyMarquee);
+  }
+
+  if (track.duration > 0) {
+    const pct = Math.min((track.position / track.duration) * 100, 100);
+    progFill.style.width = pct.toFixed(1) + '%';
+    timestamp.textContent = fmtTime(track.position) + ' / ' + fmtTime(track.duration);
+  }
+}
+
+function startPolling() {
+  update();
+  pollTimer = setInterval(update, 1000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+if (HOST) {
+  startPolling();
+} else {
+  showSetup();
+}
+
+// ── Reset config (double-click no-song text) ──────────────────────────────────
+document.getElementById('no-song').addEventListener('dblclick', () => {
+  localStorage.removeItem('ytmd-host');
+  HOST = null;
+  clearInterval(pollTimer);
+  ipInput.value = '';
+  setupErr.textContent = '';
+  showSetup();
+});
+
+window.addEventListener('resize', () => {
+  if (!getParam('size')) {
+    document.body.classList.remove('sm', 'md', 'lg');
+    document.body.classList.add(getSize());
+    applyMarquee();
+  }
+});
+</script>
+</body>
+</html>
