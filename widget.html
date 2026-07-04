@@ -372,7 +372,7 @@ body.lg #platform svg{width:36px;height:36px}
 
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
-const YTMD_PORT = 26538;
+const YTMD_PORT = 9863;
 
 function getParam(key) {
   const qs = new URLSearchParams(location.search).get(key);
@@ -507,7 +507,7 @@ async function runScan() {
     hideSetup();
     startPolling();
   } else {
-    setupErr.textContent = 'Not found automatically. Check that:\n• YouTube Music Desktop is running\n• Companion Server is enabled (Settings → Plugins)\n• Port 26538 is allowed in Windows Firewall';
+    setupErr.textContent = 'Not found automatically. Check that:\n• YouTube Music Desktop is running\n• Companion Server is enabled (Settings → Plugins)\n• Port 9863 is allowed in Windows Firewall';
     showManualInput();
   }
 }
